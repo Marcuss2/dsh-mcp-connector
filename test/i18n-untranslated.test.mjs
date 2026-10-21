@@ -94,3 +94,15 @@ test('扫描器自身：引号键与标识符键两种词典都能识别', () =>
   );
   assert.equal(dictionaryRanges(arrays).length, 1, '数组型 msgid 容器应被识别');
 });
+
+test('扫描器自身：正则字面量里的引号不会让后续判断错位', () => {
+  // `/[&<>"']/g` 的引号若被当成字符串起点，后面所有字面量判定都会错位，
+  // 会把注释正文和代码片段当成「未翻译文案」，产生大量误报。
+  const source = [
+    "const escapeHtml = (s) => String(s ?? '').replace(/[&<>\"']/g, (c) => ({ '&': '&amp;', \"'\": '&#39;' }[c]));",
+    "const a = t('已翻译');",
+    "const b = '未翻译的一条文案';",
+  ].join('\n');
+  const texts = scanSource('sample.js', source).map((h) => h.text);
+  assert.deepEqual(texts, ['未翻译的一条文案'], '正则内的引号不得影响字符串识别');
+});

@@ -32,13 +32,25 @@ export const CJK = /[\u4e00-\u9fff]/;
 export function stripComments(source) {
   const out = [...source];
   let i = 0;
-  let mode = 'code'; // code | line | block | sq | dq | tpl
+  let mode = 'code'; // code | line | block | sq | dq | tpl | regex
+  let inClass = false;
+  // 这些字符之后的 `/` 更可能是正则字面量开头，而不是除号。
+  const REGEX_PRECEDERS = new Set(['(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';', '+', '-', '*', '%', '<', '>', '~', '^', '\n']);
   while (i < source.length) {
     const c = source[i];
     const next = source[i + 1];
     if (mode === 'code') {
       if (c === '/' && next === '/') { mode = 'line'; i += 2; continue; }
       if (c === '/' && next === '*') { mode = 'block'; i += 2; continue; }
+      if (c === '/') {
+        // 正则字面量：`/[&<>"']/g` 里的引号若被当成字符串起点，后面所有判定都会错位。
+        let k = i - 1;
+        while (k >= 0 && (source[k] === ' ' || source[k] === '\t')) k -= 1;
+        const previous = k >= 0 ? source[k] : '\n';
+        if (REGEX_PRECEDERS.has(previous)) { mode = 'regex'; inClass = false; i += 1; continue; }
+        i += 1;
+        continue;
+      }
       if (c === "'") { mode = 'sq'; i += 1; continue; }
       if (c === '"') { mode = 'dq'; i += 1; continue; }
       if (c === '`') { mode = 'tpl'; i += 1; continue; }
@@ -62,11 +74,67 @@ export function stripComments(source) {
       i += 1;
       continue;
     }
+    if (mode === 'regex') {
+      if (c === '\\') { i += 2; continue; }
+      if (c === '[') { inClass = true; i += 1; continue; }
+      if (c === ']') { inClass = false; i += 1; continue; }
+      if (c === '/' && !inClass) mode = 'code';
+      i += 1;
+      continue;
+    }
     // 字符串/模板内部：原样保留，处理转义与结束符。
     if (c === '\\') { i += 2; continue; }
     if ((mode === 'sq' && c === "'") || (mode === 'dq' && c === '"') || (mode === 'tpl' && c === '`')) {
       mode = 'code';
     }
+    i += 1;
+  }
+  return out.join('');
+}
+
+/**
+ * 把正则字面量的**内容**替换为空格（保留长度与位置）。
+ *
+ * `stripComments` 已经能正确跳过正则（否则注释判定会错位），但后续按引号
+ * 切分字符串时，`/[&<>"']/g` 里的引号仍会被当成字符串起点，把后面真正的
+ * 字符串吞掉。所以在切字符串之前先把正则内容抹平。
+ *
+ * @param {string} source 已剥离注释的源码
+ * @returns {string} 等长、正则内容被空格替换的源码
+ */
+export function maskRegexLiterals(source) {
+  const out = [...source];
+  let i = 0;
+  let mode = 'code';
+  let inClass = false;
+  const REGEX_PRECEDERS = new Set(['(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';', '+', '-', '*', '%', '<', '>', '~', '^', '\n']);
+  while (i < source.length) {
+    const c = source[i];
+    if (mode === 'code') {
+      if (c === '/' && source[i + 1] === '/') { mode = 'line'; i += 2; continue; }
+      if (c === '/' && source[i + 1] === '*') { mode = 'block'; i += 2; continue; }
+      if (c === "'" ) { mode = 'sq'; i += 1; continue; }
+      if (c === '"' ) { mode = 'dq'; i += 1; continue; }
+      if (c === '`' ) { mode = 'tpl'; i += 1; continue; }
+      if (c === '/') {
+        let k = i - 1;
+        while (k >= 0 && (source[k] === ' ' || source[k] === '\t')) k -= 1;
+        if (REGEX_PRECEDERS.has(k >= 0 ? source[k] : '\n')) { mode = 'regex'; inClass = false; i += 1; continue; }
+      }
+      i += 1;
+      continue;
+    }
+    if (mode === 'regex') {
+      if (c === '\\') { out[i] = ' '; if (i + 1 < out.length) out[i + 1] = ' '; i += 2; continue; }
+      if (c === '[') { inClass = true; out[i] = ' '; i += 1; continue; }
+      if (c === ']') { inClass = false; out[i] = ' '; i += 1; continue; }
+      if (c === '/' && !inClass) { mode = 'code'; i += 1; continue; }
+      out[i] = ' ';
+      i += 1;
+      continue;
+    }
+    if (c === '\\') { i += 2; continue; }
+    if ((mode === 'sq' && c === "'") || (mode === 'dq' && c === '"') || (mode === 'tpl' && c === '`')) mode = 'code';
     i += 1;
   }
   return out.join('');
@@ -139,7 +207,7 @@ function within(index, ranges) {
  * @returns {Array<{file: string, line: number, text: string}>} 命中项
  */
 export function scanSource(file, source) {
-  const code = stripComments(source);
+  const code = maskRegexLiterals(stripComments(source));
   const dicts = dictionaryRanges(code);
   const hits = [];
   for (const match of code.matchAll(/(['"`])((?:\\[\s\S]|(?!\1)[^\\])*?)\1/g)) {
