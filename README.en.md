@@ -169,7 +169,7 @@ The default bundle configuration is in `cordis.patch.yml`:
     openBrowser: true
     showSidebarEntry: true
     compactManagementTools: false
-    locale: 'zh-CN'
+    locale: 'auto'
     frameAncestors: ['self']
 ```
 
@@ -190,7 +190,7 @@ Use the connector UI for connection setup, authorization, import, editing, snaps
 
 This setting does not hide downstream business tools, disable connections, migrate credentials, change workspace/governance rules or bypass Host approval. Use the existing session injection mode for downstream tool visibility. Reduced tool count/schema size is not a measured token or cost saving.
 
-`locale` selects the language of the panel and of the text returned by the conversation tools. It defaults to `'zh-CN'`, which keeps the existing Chinese UI unchanged. Set it to `'en'` for English, or to `'auto'` to follow the Host locale and then `LC_ALL` / `LC_MESSAGES` / `LANG`, falling back to Chinese when nothing matches. An unset value means Chinese rather than auto-detection, so a machine with `LANG=en_US.UTF-8` does not silently switch to English after an upgrade. Reload the plugin after changing it.
+`locale` selects the language of the panel and of the text returned by the conversation tools. It defaults to `'auto'`, which follows the language you picked in DSH under Settings → Language (the `preference` of `@deepseek-ai/dsh-client-locale`), then `LC_ALL` / `LC_MESSAGES` / `LANG`, and falls back to Chinese when nothing matches. The interface language is the user's own preference, so the plugin does not override it: a Chinese user who changes nothing still gets Chinese (the DSH default), and a user who selected English in DSH gets English. Set it to `'zh-CN'` or `'en'` to force one language. Reload the plugin after changing it.
 
 Connector names, vendors, categories, URLs and error codes are never translated, so the same catalog renders in both languages. See [docs/I18N.md](docs/I18N.md).
 

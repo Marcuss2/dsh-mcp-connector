@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import {
   DEFAULT_LOCALE,
   SUPPORTED_LOCALES,
@@ -120,4 +121,49 @@ test('已合并的英文词典是扁平字符串映射，且不含空译文', ()
     assert.equal(typeof translation, 'string');
     assert.notEqual(translation.trim(), '', msgid);
   }
+});
+
+test('插件不直接访问 ctx.locale：locale 是仅浏览器端服务，Host 侧没有', async () => {
+  // 回归：Cordis 的上下文代理在读取未注入的服务时直接抛
+  // `cannot get property "locale" without inject`，可选链（`ctx.locale?.`）拦不住，
+  // 曾导致插件在 profile 中装载失败（application: failed）。
+  // 而且 `locale` 是仅浏览器端的服务（98 个 Host 服务里没有它），
+  // 在 Host 侧注入等待永远等不到，会静默退回中文。
+  const raw = await readFile(new URL('../lib/index.js', import.meta.url), 'utf8');
+  // 只看代码：注释里会引用错误写法作为说明。
+  const source = raw
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('//'))
+    .join('\n');
+  assert.equal(
+    /ctx\.locale\s*\??\./.test(source),
+    false,
+    'lib/index.js 不能访问 ctx.locale：它是仅浏览器端服务，Host 侧访问会抛错'
+  );
+});
+
+test('语言偏好从 Host loader 的 locale 插件配置读取', async () => {
+  const raw = await readFile(new URL('../lib/index.js', import.meta.url), 'utf8');
+  const fn = raw.match(/function readHostLocalePreference\(ctx\) \{[\s\S]*?\n\}/);
+  assert.ok(fn, 'lib/index.js 应提供 readHostLocalePreference');
+  const read = new Function(`return ${fn[0]};`)();
+  const LOCALE = '@deepseek-ai/dsh-client-locale';
+  const make = (config) => ({ loader: { entries: function* () { yield { options: { name: LOCALE, config } }; } } });
+  // 用户在 DSH 里选了英文：Host 必须读到，否则面板永远停在中文。
+  assert.equal(read(make({ preference: 'en' })), 'en');
+  assert.equal(read(make({ preference: 'zh' })), 'zh');
+  assert.equal(read(make({ preference: 'en-US' })), 'en-US');
+  // 未设置偏好 = 跟随浏览器，Host 侧没有单值可用。
+  assert.equal(read(make({})), undefined);
+  assert.equal(read(make({ preference: '' })), undefined);
+  // 插件未安装 / loader 不可用：都不得抛错。
+  assert.equal(read({ loader: { entries: function* () { yield { options: { name: 'other', config: {} } }; } } }), undefined);
+  assert.equal(read({}), undefined);
+});
+
+test('未声明 locale 时，auto 之外的配置完全不触碰语言服务', async () => {
+  // 默认中文不应要求宿主提供 locale 服务。
+  assert.equal(resolveLocale(undefined, {}), 'zh-CN');
+  assert.equal(resolveLocale('zh-CN', {}), 'zh-CN');
+  assert.equal(resolveLocale('en', {}), 'en');
 });

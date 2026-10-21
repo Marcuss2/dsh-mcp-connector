@@ -165,7 +165,7 @@ Bundle 默认配置位于 `cordis.patch.yml`：
     openBrowser: true
     showSidebarEntry: true
     compactManagementTools: false
-    locale: 'zh-CN'
+    locale: 'auto'
     frameAncestors: ['self']
 ```
 
@@ -185,7 +185,7 @@ Bundle 默认配置位于 `cordis.patch.yml`：
 - 例如发现入口可用 `{"action":"search","query":"天气","limit":5}`；查询连接状态可用 `{"action":"status"}`。详情使用 `action=detail` 和必填 `toolName`，市场搜索使用 `action=catalog` 与可选 `keyword`。
 - 设回 `false` 并重载插件可恢复旧管理工具名；不要同时运行两份插件。工具数量和 schema 大小的减少不等于实测 token 或费用节省。
 
-`locale` 选择面板与对话工具返回文案的语言，默认为 `'zh-CN'`，即保持现有中文界面不变。设为 `'en'` 切换为英文；设为 `'auto'` 时依次跟随 Host 语言、`LC_ALL` / `LC_MESSAGES` / `LANG`，都无法识别时回退中文。注意「未配置」等同中文而非自动检测，避免 `LANG=en_US.UTF-8` 的机器在升级后静默变成英文界面。修改后需重载插件。
+`locale` 选择面板与对话工具返回文案的语言，默认为 `'auto'`：跟随用户在 DSH「设置 → Language」里的选择（即 `@deepseek-ai/dsh-client-locale` 的 `preference`），读不到时再按 `LC_ALL` / `LC_MESSAGES` / `LANG`，仍无法识别时回退中文。界面语言属于用户偏好，插件不覆盖它：中文用户不做任何设置仍是中文（中文是 DSH 默认语言），在 DSH 里选了 English 的用户会直接得到英文。也可写成 `'zh-CN'` / `'en'` 强制指定。修改后需重载插件。
 
 连接器名称、厂商、分类、URL 与错误码不参与翻译，两种语言使用同一份目录。详见 [docs/I18N.md](docs/I18N.md)。
 
