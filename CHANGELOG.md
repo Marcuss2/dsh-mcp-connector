@@ -2,6 +2,20 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)；首个公开版本从 `0.1.0` 开始。
 
+## [Unreleased]
+
+### Added
+
+- 可选 `locale` 界面语言（默认 `'zh-CN'`）：支持 `'en'` 英文与 `'auto'` 跟随 Host/系统语言。中文路径不查表、逐字不变；英文缺项回退中文原文，不会出现空白。连接器目录、URL 与错误码不翻译。详见 `docs/I18N.md`。
+
+### Fixed
+
+- 修复面板内联事件处理器中的存储型 XSS：`esc()` 只做 HTML 转义，而 HTML 解析器会先把 `&#39;` 解码回 `'`，导致目录中恶意 `id` 可在面板同源执行脚本。所有处理器实参改为 `jsString()`（`JSON.stringify` + `esc`）双层编码，并新增回归测试。
+
+### Verification scope
+
+- 新增 i18n 核心、词典合并冲突、占位符一致性与翻译完备性测试；`npm run check` 通过（本机 Node 26 上 `catalog-proxy` 14 项为既有环境问题，未改动该用例）。翻译经 GLM 5.3 Flash 复核并按其结论修正术语与一处语义错误。未做 Desktop 实机验收，不视为已发布。
+
 ## [0.2.76] - 2026-10-20
 
 ### Added / Fixed
