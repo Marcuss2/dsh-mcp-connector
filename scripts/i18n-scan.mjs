@@ -30,7 +30,10 @@ export const CJK = /[\u4e00-\u9fff]/;
  * @returns {string} 与原文等长（注释被替换为空格，保留换行以便定位行号）
  */
 export function stripComments(source) {
-  const out = [...source];
+  // 用 split('') 而不是展开运算符：`[...source]` 按**码点**迭代，而 `source[i]`
+  // 按**码元**索引。面板里有 29 个 emoji（💬 🔗 🔑），一个 emoji 占 2 个码元，
+  // 展开后数组会短一截，所有偏移随之错位，字符串切分全乱（曾把注释正文当成文案）。
+  const out = source.split('');
   let i = 0;
   let mode = 'code'; // code | line | block | sq | dq | tpl | regex
   let inClass = false;
@@ -103,7 +106,10 @@ export function stripComments(source) {
  * @returns {string} 等长、正则内容被空格替换的源码
  */
 export function maskRegexLiterals(source) {
-  const out = [...source];
+  // 用 split('') 而不是展开运算符：`[...source]` 按**码点**迭代，而 `source[i]`
+  // 按**码元**索引。面板里有 29 个 emoji（💬 🔗 🔑），一个 emoji 占 2 个码元，
+  // 展开后数组会短一截，所有偏移随之错位，字符串切分全乱（曾把注释正文当成文案）。
+  const out = source.split('');
   let i = 0;
   let mode = 'code';
   let inClass = false;
@@ -155,7 +161,10 @@ export function dictionaryRanges(source) {
   // 也覆盖 `const X = { k: ['枚举', '代码', '中文提示', '中文建议'] }` 与
   // 函数内的 `const values = { k: [...] }`：它们同样是 msgid 容器，
   // 只是值放在数组里而不是直接作值。
-  for (const match of source.matchAll(/const\s+[A-Za-z_$][\w$]*\s*=\s*(?:Object\s*\.\s*freeze\s*\(\s*)?\{/g)) {
+  // 也要认 `MESSAGES.en = { ... }` / `EXPORTS.x = { ... }` 这类**赋值**形式：
+  // 面板的英文词典就是分两步写的（先 `const MESSAGES = {...}`，再
+  // `MESSAGES.en = {...}`），只认 `const` 会把它当成正文。
+  for (const match of source.matchAll(/(?:const\s+[A-Za-z_$][\w$]*|[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+)\s*=\s*(?:Object\s*\.\s*freeze\s*\(\s*)?\{/g)) {
     let depth = 0;
     let i = match.index + match[0].length - 1;
     for (; i < source.length; i += 1) {
