@@ -1,0 +1,194 @@
+/**
+ * 中文文案覆盖扫描器。
+ *
+ * 目的：找出「面向用户的中文字面量没有经过 `t()`」的地方。
+ *
+ * 为什么不直接用正则：中文既会出现在**代码**里（未翻译的文案），也会出现在
+ * 三处**合法**位置——注释、词典字面量（msgid 就是中文原文）、以及已包在
+ * `t(...)` 里的实参。朴素的逐行正则会把这三类都算成缺陷，产生大量噪声，
+ * 最后没人会看这个检查。所以这里做三件事：
+ *
+ *   1. 逐字符扫描剥离注释（字符串里的 `//`、正则里的引号都不会误判）；
+ *   2. 识别「中文占多数」的对象字面量，视为 msgid 词典整体跳过；
+ *   3. 从字面量**向外**看，判断它是不是 `t(...)` 的实参（支持跨行）。
+ *
+ * 只做词法级判断，不引入解析器依赖：本仓库没有 AST 依赖，且这里关心的是
+ * 「这个字符串有没有被 t() 包住」，词法信息已经足够。
+ */
+
+import { readFileSync } from 'node:fs';
+import { readdir } from 'node:fs/promises';
+import path from 'node:path';
+
+/** 是否含中日韩统一表意文字。 */
+export const CJK = /[\u4e00-\u9fff]/;
+
+/**
+ * 剥离 JS 注释，保留字符串与模板字面量原样。
+ *
+ * @param {string} source 源码
+ * @returns {string} 与原文等长（注释被替换为空格，保留换行以便定位行号）
+ */
+export function stripComments(source) {
+  const out = [...source];
+  let i = 0;
+  let mode = 'code'; // code | line | block | sq | dq | tpl
+  while (i < source.length) {
+    const c = source[i];
+    const next = source[i + 1];
+    if (mode === 'code') {
+      if (c === '/' && next === '/') { mode = 'line'; i += 2; continue; }
+      if (c === '/' && next === '*') { mode = 'block'; i += 2; continue; }
+      if (c === "'") { mode = 'sq'; i += 1; continue; }
+      if (c === '"') { mode = 'dq'; i += 1; continue; }
+      if (c === '`') { mode = 'tpl'; i += 1; continue; }
+      i += 1;
+      continue;
+    }
+    if (mode === 'line') {
+      if (c === '\n') mode = 'code'; else out[i] = ' ';
+      i += 1;
+      continue;
+    }
+    if (mode === 'block') {
+      if (c === '*' && next === '/') {
+        out[i] = ' ';
+        out[i + 1] = ' ';
+        i += 2;
+        mode = 'code';
+        continue;
+      }
+      if (c !== '\n') out[i] = ' ';
+      i += 1;
+      continue;
+    }
+    // 字符串/模板内部：原样保留，处理转义与结束符。
+    if (c === '\\') { i += 2; continue; }
+    if ((mode === 'sq' && c === "'") || (mode === 'dq' && c === '"') || (mode === 'tpl' && c === '`')) {
+      mode = 'code';
+    }
+    i += 1;
+  }
+  return out.join('');
+}
+
+/**
+ * 找出「词典」对象字面量区间。
+ *
+ * 判据：一个 `const NAME = { ... }` / `Object.freeze({ ... })` 的体内，字符串有
+ * 六成以上是中文。这类对象就是 msgid 表（例如 `CONNECTION_STATE_MSGIDS`、
+ * `LABELS`、`MESSAGES_EN`），其中的中文是**合法**的，整体跳过。
+ *
+ * @param {string} source 已剥离注释的源码
+ * @returns {Array<[number, number]>} 起止偏移
+ */
+export function dictionaryRanges(source) {
+  const ranges = [];
+  // 也覆盖 `const X = { k: ['枚举', '代码', '中文提示', '中文建议'] }` 与
+  // 函数内的 `const values = { k: [...] }`：它们同样是 msgid 容器，
+  // 只是值放在数组里而不是直接作值。
+  for (const match of source.matchAll(/const\s+[A-Za-z_$][\w$]*\s*=\s*(?:Object\s*\.\s*freeze\s*\(\s*)?\{/g)) {
+    let depth = 0;
+    let i = match.index + match[0].length - 1;
+    for (; i < source.length; i += 1) {
+      if (source[i] === '{') depth += 1;
+      else if (source[i] === '}') {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+    }
+    const body = source.slice(match.index, i);
+    const strings = [...body.matchAll(/(['"`])((?:\\[\s\S]|(?!\1)[^\\])*?)\1/g)].map((m) => m[2]);
+    if (strings.length < 3) continue;
+    // 词典有两种写法，必须都认：
+    //   A. 引号中文键 → 英文值：`'中文原文': 'English'`（MESSAGES_EN）
+    //      中文只占约一半，所以「全部字符串」比例会漏判，要看键。
+    //   B. 标识符键 → 中文值：`disconnected: '未连接'`（状态/阶段/指引表）
+    //      键没有引号，所以「键」判据会漏判，要看值。
+    const quotedKeys = [...body.matchAll(/(['"`])((?:\\[\s\S]|(?!\1)[^\\])*?)\1\s*:/g)].map((m) => m[2]);
+    const keyRatio = quotedKeys.length ? quotedKeys.filter((k) => CJK.test(k)).length / quotedKeys.length : 0;
+    const cjkStrings = strings.filter((s) => CJK.test(s)).length;
+    const valueRatio = cjkStrings / strings.length;
+    // C. 值是数组的 msgid 容器：`auth: ['authentication', '中文提示', '中文建议']`。
+    //    每条记录里英文字符串（枚举/代码）会拉低比例，但中文字符串的**绝对数量**
+    //    很多且没有任何 `t()` 包裹——这类字面量表就是词典。
+    const bulkMsgids = cjkStrings >= 3 && !/\bt\(/.test(body);
+    if (keyRatio > 0.6 || valueRatio > 0.6 || bulkMsgids) {
+      ranges.push([match.index, i]);
+    }
+  }
+  return ranges;
+}
+
+/**
+ * 判断偏移是否落在某个区间内。
+ *
+ * @param {number} index 偏移
+ * @param {Array<[number, number]>} ranges 区间列表
+ * @returns {boolean} 是否在区间内
+ */
+function within(index, ranges) {
+  return ranges.some(([from, to]) => index >= from && index < to);
+}
+
+/**
+ * 扫描单个文件里「未经过 t() 的中文字面量」。
+ *
+ * @param {string} file 文件路径（仅用于报告）
+ * @param {string} source 源码
+ * @returns {Array<{file: string, line: number, text: string}>} 命中项
+ */
+export function scanSource(file, source) {
+  const code = stripComments(source);
+  const dicts = dictionaryRanges(code);
+  const hits = [];
+  for (const match of code.matchAll(/(['"`])((?:\\[\s\S]|(?!\1)[^\\])*?)\1/g)) {
+    const text = match[2];
+    if (!CJK.test(text)) continue;
+    if (within(match.index, dicts)) continue;
+    // 从字面量向外跳过空白，看前面是不是 `t(`。
+    let j = match.index - 1;
+    while (j >= 0 && /\s/.test(code[j])) j -= 1;
+    const isCall = code[j] === '(' && /(?:^|[^A-Za-z0-9_$])t$/.test(code.slice(Math.max(0, j - 2), j));
+    if (isCall) continue;
+    // 模板字面量里已经含 t(...) 插值的，视为已本地化。
+    if (match[1] === '`' && /\bt\(/.test(text)) continue;
+    hits.push({ file, line: code.slice(0, match.index).split('\n').length, text: text.replace(/\s+/g, ' ').trim() });
+  }
+  return hits;
+}
+
+/**
+ * 递归列出目录下的 `.js` 文件，跳过词典目录与 node_modules。
+ *
+ * @param {string} dir 目录
+ * @returns {Promise<string[]>} 文件路径
+ */
+export async function listSourceFiles(dir) {
+  const out = [];
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === 'i18n' || entry.name === 'node_modules') continue;
+      out.push(...await listSourceFiles(full));
+    } else if (entry.name.endsWith('.js')) {
+      out.push(full);
+    }
+  }
+  return out;
+}
+
+/**
+ * 扫描整个 `lib/` 目录。
+ *
+ * @param {string} root 仓库根目录
+ * @returns {Promise<Array<{file: string, line: number, text: string}>>} 命中项
+ */
+export async function scanRepository(root) {
+  const files = await listSourceFiles(path.join(root, 'lib'));
+  const hits = [];
+  for (const file of files) {
+    hits.push(...scanSource(path.relative(root, file), readFileSync(file, 'utf8')));
+  }
+  return hits;
+}

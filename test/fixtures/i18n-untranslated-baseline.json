@@ -1,0 +1,30 @@
+{
+  "_comment": "未翻译的中文字面量基线（scripts/i18n-scan.mjs 生成）。只允许减少：修好一个文件就把对应条目去掉；数量增加即视为回归。最终目标是把 obj 清空。",
+  "total": 237,
+  "files": {
+    "lib/callback-server.js": 2,
+    "lib/catalog.js": 23,
+    "lib/cli-providers.js": 33,
+    "lib/connection-backup.js": 1,
+    "lib/connection-editor.js": 19,
+    "lib/connection-scopes.js": 11,
+    "lib/connectors/json-connector.js": 15,
+    "lib/connectors/manual-connector.js": 11,
+    "lib/connectors/oauth-connector.js": 6,
+    "lib/governance.js": 8,
+    "lib/index.js": 29,
+    "lib/local-overrides.js": 8,
+    "lib/mcp-http.js": 12,
+    "lib/mcp-validation.js": 2,
+    "lib/migration.js": 2,
+    "lib/oauth.js": 12,
+    "lib/probe.js": 4,
+    "lib/prompts.js": 1,
+    "lib/schema.js": 9,
+    "lib/session-injection.js": 21,
+    "lib/tool-catalog-cache.js": 2,
+    "lib/util.js": 3,
+    "lib/version-status.js": 2,
+    "lib/web.js": 1
+  }
+}
