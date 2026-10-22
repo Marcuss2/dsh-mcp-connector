@@ -1,10 +1,21 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { scanRepository, scanSource, dictionaryRanges, stripComments } from '../scripts/i18n-scan.mjs';
 
-const ROOT = new URL('..', import.meta.url).pathname;
+// URL.pathname retains percent escapes and a leading slash before Windows drives.
+const ROOT_URL = new URL('..', import.meta.url);
+const ROOT = fileURLToPath(ROOT_URL);
+
+test('扫描根目录使用本机文件路径，保留空格和非 ASCII 目录', () => {
+  assert.equal(pathToFileURL(ROOT).href, ROOT_URL.href);
+  const encoded = new URL('space%20and%20%E4%B8%AD%E6%96%87/', ROOT_URL);
+  const decoded = fileURLToPath(encoded);
+  assert.ok(decoded.includes('space and 中文'));
+  assert.equal(pathToFileURL(decoded).href, encoded.href);
+});
 const BASELINE = JSON.parse(
   await readFile(new URL('./fixtures/i18n-untranslated-baseline.json', import.meta.url), 'utf8'),
 );
