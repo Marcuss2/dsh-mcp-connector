@@ -11,12 +11,15 @@
  * 扫描是启发式的：它只检查确实写进 `t('…')` 的中文，不要求改造每一处中文
  * （注释、日志、连接器数据本来就该保留中文）。
  */
+import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { EN_DICTIONARY } from '../lib/i18n/locales/en.js';
+import path from 'node:path';
 
-const CJK = /[\u4e00-\u9fff]/;
+import { EN_DICTIONARY } from '../lib/i18n/locales/en.js';
+import { CJK, listSourceFiles, stripComments } from '../scripts/i18n-scan.mjs';
+
 
 /** 收集 `t('中文')` / `t("中文")` / `t(`中文`)` 形式的 msgid。 */
 function collectMsgids(source) {
@@ -179,4 +182,29 @@ test('客户端 bundle 的内置词典与共享英文分片完全一致', async 
   for (const key of Object.keys(inline)) {
     assert.equal(inline[key], shared[key], `译文不一致：${key}`);
   }
+});
+
+test('lib/ 下每个 t(中文…) msgid 都有英文译文（全量，非抽样）', async () => {
+  // 回归：曾有 50 条 msgid 只翻译了源码、英文词条没落盘，界面上就会回退中文，
+  // 而按文件的抽样断言看不出来。这里扫全量源码，逐条比对合并后的词典。
+  const root = new URL('..', import.meta.url).pathname;
+  const modules = await listSourceFiles(path.join(root, 'lib'));
+  assert.ok(modules.length > 20, `应扫描到全部模块，实际 ${modules.length}`);
+
+  const missing = [];
+  for (const file of modules) {
+    const code = stripComments(readFileSync(file, 'utf8'));
+    for (const match of code.matchAll(/\bt\(\s*(['"`])((?:\\[\s\S]|(?!\1)[^\\])*?)\1/g)) {
+      const msgid = match[2];
+      if (!CJK.test(msgid)) continue;
+      if (!Object.hasOwn(EN_DICTIONARY, msgid)) {
+        missing.push(`${path.relative(root, file)} :: ${msgid}`);
+      }
+    }
+  }
+  assert.deepEqual(
+    [...new Set(missing)],
+    [],
+    `以下 msgid 缺英文译文，英文界面会回退中文：\n${[...new Set(missing)].join('\n')}`,
+  );
 });

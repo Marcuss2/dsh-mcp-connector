@@ -43,8 +43,24 @@ export function stripComments(source) {
     const c = source[i];
     const next = source[i + 1];
     if (mode === 'code') {
-      if (c === '/' && next === '/') { mode = 'line'; i += 2; continue; }
-      if (c === '/' && next === '*') { mode = 'block'; i += 2; continue; }
+      // 注释起始的 `//`、`/*` 本身必须抹掉：否则 `stripComments` 的输出里还留着
+      // `/*`，下游 `maskRegexLiterals` 会把它当成块注释再次进入 block 模式、
+      // 一路吞到文件末尾——整份文件对扫描器不可见（曾导致 index.js 里 84 条
+      // 真实文案与 callback-server 的误报）。
+      if (c === '/' && next === '/') {
+        out[i] = ' ';
+        out[i + 1] = ' ';
+        mode = 'line';
+        i += 2;
+        continue;
+      }
+      if (c === '/' && next === '*') {
+        out[i] = ' ';
+        out[i + 1] = ' ';
+        mode = 'block';
+        i += 2;
+        continue;
+      }
       if (c === '/') {
         // 正则字面量：`/[&<>"']/g` 里的引号若被当成字符串起点，后面所有判定都会错位。
         let k = i - 1;
@@ -182,7 +198,11 @@ export function dictionaryRanges(source) {
     //      中文只占约一半，所以「全部字符串」比例会漏判，要看键。
     //   B. 标识符键 → 中文值：`disconnected: '未连接'`（状态/阶段/指引表）
     //      键没有引号，所以「键」判据会漏判，要看值。
-    const quotedKeys = [...body.matchAll(/(['"`])((?:\\[\s\S]|(?!\1)[^\\])*?)\1\s*:/g)].map((m) => m[2]);
+    // 键判据只认 `'字面量':` 且**排除三元分支**：`cond ? \`甲\` : \`乙\`` 里的
+    // `` `甲` `` 后面也紧跟冒号，会把普通对象（如 index.js 的 api 表）误判成
+    // msgid 词典，从而整段代码被跳过——曾因此漏掉 84 条真实文案。
+    const ternaryCount = (body.match(/\?/g) ?? []).length;
+    const quotedKeys = [...body.matchAll(/(['"])((?:\\[\s\S]|(?!\1)[^\\])*?)\1\s*:/g)].map((m) => m[2]);
     const keyRatio = quotedKeys.length ? quotedKeys.filter((k) => CJK.test(k)).length / quotedKeys.length : 0;
     const cjkStrings = strings.filter((s) => CJK.test(s)).length;
     const valueRatio = cjkStrings / strings.length;
@@ -190,12 +210,28 @@ export function dictionaryRanges(source) {
     //    每条记录里英文字符串（枚举/代码）会拉低比例，但中文字符串的**绝对数量**
     //    很多且没有任何 `t()` 包裹——这类字面量表就是词典。
     const bulkMsgids = cjkStrings >= 3 && !/\bt\(/.test(body);
-    if (keyRatio > 0.6 || valueRatio > 0.6 || bulkMsgids) {
+    // 三元密集的对象不是词典：真正的 msgid 表里几乎不会有 `? :`。
+    const ternaryHeavy = ternaryCount >= 3;
+    if (!ternaryHeavy && (keyRatio > 0.6 || valueRatio > 0.6 || bulkMsgids)) {
       ranges.push([match.index, i]);
     }
   }
   return ranges;
 }
+
+/**
+ * 有意不翻译的字符串：枚举/数据值，翻译会破坏相等比较或持久化。
+ *
+ * 每一条都必须写明原因。这里是**白名单**，不是「懒得翻」的出口：新增条目
+ * 需要在 review 里解释清楚为什么它不是文案。
+ */
+export const ACCEPTED_UNTRANSLATED = Object.freeze({
+  // 目录分类的**数据值**：`catalog.json` 里就是中文（"category": "其他"），
+  // 面板 `CATEGORY_MAP[c] || '其他'` 与 `matchesMarketFilters` 按此值做相等比较，
+  // 并会持久化进 catalog store。英文模式下把它翻译成 "Other" 会让默认分类的卡片
+  // 从所有分类筛选里消失。分类的**显示名**由面板 `t(cat.label)` 单独翻译。
+  '其他': 'catalog category data value, equality-compared in the panel and persisted',
+});
 
 /**
  * 判断偏移是否落在某个区间内。
@@ -230,6 +266,8 @@ export function scanSource(file, source) {
     if (isCall) continue;
     // 模板字面量里已经含 t(...) 插值的，视为已本地化。
     if (match[1] === '`' && /\bt\(/.test(text)) continue;
+    // 白名单：数据/枚举值，翻译会破坏相等比较或持久化（见 ACCEPTED_UNTRANSLATED）。
+    if (Object.hasOwn(ACCEPTED_UNTRANSLATED, text.trim())) continue;
     hits.push({ file, line: code.slice(0, match.index).split('\n').length, text: text.replace(/\s+/g, ' ').trim() });
   }
   return hits;

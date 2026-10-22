@@ -119,3 +119,58 @@ test('扫描器边界：只覆盖 lib/ 的普通脚本，不覆盖模板字面�
   // 出现模板字面量密集的文件，应改用真正的解析器，而不是放宽这里的断言。
   assert.ok(true);
 });
+
+test('扫描器自身：数据值白名单只放行写明原因的条目', async () => {
+  const { ACCEPTED_UNTRANSLATED } = await import('../scripts/i18n-scan.mjs');
+  // 白名单是「数据值」出口，不是逃避翻译的漏洞：每条必须有非空理由。
+  for (const [text, reason] of Object.entries(ACCEPTED_UNTRANSLATED)) {
+    assert.ok(text.length > 0, '白名单条目不能为空');
+    assert.ok(typeof reason === 'string' && reason.trim().length > 20,
+      `白名单条目 "${text}" 必须写明为什么它不是文案`);
+  }
+  // 白名单只应包含枚举/数据值，不应悄悄积累文案。
+  assert.ok(Object.keys(ACCEPTED_UNTRANSLATED).length <= 5,
+    '白名单条目过多，说明有用文案被塞进来了');
+});
+
+test('全部翻译完成：lib/ 下没有未翻译的用户文案', async () => {
+  const hits = await scanRepository(ROOT);
+  assert.deepEqual(
+    hits,
+    [],
+    `仍有未翻译文案：\n${hits.map((h) => `${h.file}:${h.line} ${h.text}`).join('\n')}`,
+  );
+});
+
+test('扫描器自身：块注释不会让后续代码整段不可见', () => {
+  // 回归：stripComments 曾只抹掉闭合的 `*/`、留下开头的 `/*`，下游
+  // maskRegexLiterals 再次进入 block 模式并一路吞到文件末尾。结果是
+  // **任何含块注释的文件都完全不可见**——lib/index.js 因此漏掉 84 条真实文案，
+  // callback-server.js 则被报成误报。旧的自测固件没有块注释，所以没发现。
+  const source = [
+    '/* 文件头注释 */',
+    "const a = 'x'.replace(/[&<>\"']/g, 'y');",
+    "const b = '未翻译的一条文案';",
+  ].join('\n');
+  const hits = scanSource('sample.js', source).map((h) => h.text);
+  assert.deepEqual(hits, ['未翻译的一条文案'],
+    '块注释之后的正则与文案仍必须被正确识别');
+});
+
+test('扫描器自身：三元密集的普通对象不会被当成词典', () => {
+  // 回归：`cond ? \`甲\` : \`乙\`` 里的模板字面量后面紧跟冒号，曾被算成
+  // 「引号中文键」，把普通对象判成 msgid 词典并整段跳过
+  // （lib/index.js 的 api 表因此藏住 84 条文案）。
+  const source = [
+    'const api = {',
+    '  a: flag ? `甲` : `乙`,',
+    '  b: flag ? `丙` : `丁`,',
+    '  c: flag ? `戊` : `己`,',
+    '};',
+    "const x = '真正未翻译的文案';",
+  ].join('\n');
+  const code = stripComments(source);
+  assert.deepEqual(dictionaryRanges(code), [], '三元对象不是词典');
+  const hits = scanSource('sample.js', source).map((h) => h.text);
+  assert.ok(hits.length > 0, '三元对象之后的真实文案必须被发现');
+});
