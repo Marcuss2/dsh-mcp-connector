@@ -184,11 +184,15 @@ export async function listSourceFiles(dir) {
  * @param {string} root 仓库根目录
  * @returns {Promise<Array<{file: string, line: number, text: string}>>} 命中项
  */
+export function baselinePath(root, file, pathApi = path) {
+  return pathApi.relative(root, file).split(pathApi.sep).join('/');
+}
+
 export async function scanRepository(root) {
   const files = await listSourceFiles(path.join(root, 'lib'));
   const hits = [];
   for (const file of files) {
-    hits.push(...scanSource(path.relative(root, file), readFileSync(file, 'utf8')));
+    hits.push(...scanSource(baselinePath(root, file), readFileSync(file, 'utf8')));
   }
   return hits;
 }

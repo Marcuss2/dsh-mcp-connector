@@ -2,8 +2,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import path from 'node:path';
 
-import { scanRepository, scanSource, dictionaryRanges, stripComments } from '../scripts/i18n-scan.mjs';
+import { baselinePath, scanRepository, scanSource, dictionaryRanges, stripComments } from '../scripts/i18n-scan.mjs';
+
+test('扫描结果在 Windows 与 POSIX 使用相同的基线路径键', () => {
+  assert.equal(baselinePath('D:\\repo', 'D:\\repo\\lib\\connectors\\json-connector.js', path.win32), 'lib/connectors/json-connector.js');
+  assert.equal(baselinePath('/repo', '/repo/lib/connectors/json-connector.js', path.posix), 'lib/connectors/json-connector.js');
+});
 
 // URL.pathname retains percent escapes and a leading slash before Windows drives.
 const ROOT_URL = new URL('..', import.meta.url);
