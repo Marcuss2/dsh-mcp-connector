@@ -16,8 +16,13 @@ import vm from 'node:vm';
 
 const uiSource = (await readFile(new URL('../ui/index.html', import.meta.url), 'utf8')).replace(/\r\n?/g, '\n');
 
-const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const jsString = (value) => esc(JSON.stringify(String(value ?? '')));
+// Test the shipped implementation, not a duplicate that could drift from it.
+const helperSource = ['esc', 'jsString'].map((name) => {
+  const match = uiSource.match(new RegExp(`  function ${name}\\([^]*?\\n  }`));
+  assert.ok(match, `missing production helper: ${name}`);
+  return match[0];
+}).join('\n');
+const { esc, jsString } = vm.runInNewContext(`${helperSource}; ({ esc, jsString })`);
 
 /** 取出属性值并按浏览器规则解码字符引用（`&amp;` 必须最后解码）。 */
 function decodeAttribute(raw) {
